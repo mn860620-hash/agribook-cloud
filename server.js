@@ -1,60 +1,55 @@
 const express = require('express');
-const { execFile } = require('child_process');
 const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('ffmpeg-static');
+
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
-app.use(express.raw({ type: '*/*', limit: '150mb' }));
+const PORT = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
-  res.status(200).send('AgriBook Cloud Converter is Running');
+  res.send('برنامج AgriBook Cloud Converter قيد التشغيل');
 });
 
-app.post('/convert', (req, res) => {
-  if (!req.body || !req.body.length) {
-    return res.status(400).send('Empty video buffer');
+app.post('/convert', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => {
+  if (!req.body || req.body.length === 0) {
+    return res.status(400).send('No video data received');
   }
 
-  const id = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-  const inFile = `/tmp/in_${id}.mp4`;
-  const outFile = `/tmp/out_${id}.ogv`;
+  const id = Date.now() + '_' + Math.floor(Math.random() * 10000);
+  const inputPath = path.join(os.tmpdir(), `in_${id}.mp4`);
+  const outputPath = path.join(os.tmpdir(), `out_${id}.ogv`);
 
-  const cleanup = () => {
-    try { if (fs.existsSync(inFile)) fs.unlinkSync(inFile); } catch (_) {}
-    try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch (_) {}
-  };
+  fs.writeFileSync(inputPath, req.body);
 
-  try {
-    fs.writeFileSync(inFile, req.body);
-  } catch (e) {
-    cleanup();
-    return res.status(500).send('Write error');
-  }
-
-  execFile(
-    'ffmpeg',
-    [
-      '-y',
-      '-i', inFile,
+  ffmpeg(inputPath)
+    .outputOptions([
+      '-vf', "scale='min(640,iw)':-2",
+      '-r', '24',
       '-c:v', 'libtheora',
       '-q:v', '5',
       '-c:a', 'libvorbis',
-      '-q:a', '3',
-      outFile
-    ],
-    (err) => {
-      if (err || !fs.existsSync(outFile)) {
-        cleanup();
-        return res.status(500).send('Conversion failed');
-      }
-
-      res.sendFile(outFile, () => {
-        cleanup();
+      '-q:a', '3'
+    ])
+    .toFormat('ogg')
+    .on('end', () => {
+      res.sendFile(outputPath, () => {
+        try { fs.unlinkSync(inputPath); } catch (e) {}
+        try { fs.unlinkSync(outputPath); } catch (e) {}
       });
-    }
-  );
+    })
+    .on('error', (err) => {
+      console.error('FFmpeg error:', err.message);
+      try { fs.unlinkSync(inputPath); } catch (e) {}
+      try { fs.unlinkSync(outputPath); } catch (e) {}
+      res.status(500).send('Conversion failed');
+    })
+    .save(outputPath);
 });
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
