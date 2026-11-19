@@ -2,10 +2,8 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const ffmpeg = require('fluent-ffmpeg');
+const { execFile } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
-
-ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -25,29 +23,31 @@ app.post('/convert', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => 
 
   fs.writeFileSync(inputPath, req.body);
 
-  ffmpeg(inputPath)
-    .outputOptions([
-      '-vf', "scale='min(640,iw)':-2",
-      '-r', '24',
-      '-c:v', 'libtheora',
-      '-q:v', '5',
-      '-c:a', 'libvorbis',
-      '-q:a', '3'
-    ])
-    .toFormat('ogg')
-    .on('end', () => {
-      res.sendFile(outputPath, () => {
-        try { fs.unlinkSync(inputPath); } catch (e) {}
-        try { fs.unlinkSync(outputPath); } catch (e) {}
-      });
-    })
-    .on('error', (err) => {
+  const args = [
+    '-y',
+    '-i', inputPath,
+    '-vf', "scale='min(640,iw)':-2",
+    '-r', '24',
+    '-c:v', 'libtheora',
+    '-q:v', '5',
+    '-c:a', 'libvorbis',
+    '-q:a', '3',
+    outputPath
+  ];
+
+  execFile(ffmpegPath, args, (err) => {
+    if (err) {
       console.error('FFmpeg error:', err.message);
       try { fs.unlinkSync(inputPath); } catch (e) {}
       try { fs.unlinkSync(outputPath); } catch (e) {}
-      res.status(500).send('Conversion failed');
-    })
-    .save(outputPath);
+      return res.status(500).send('Conversion failed');
+    }
+
+    res.sendFile(outputPath, () => {
+      try { fs.unlinkSync(inputPath); } catch (e) {}
+      try { fs.unlinkSync(outputPath); } catch (e) {}
+    });
+  });
 });
 
 app.listen(PORT, () => {
